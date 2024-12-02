@@ -1,0 +1,9 @@
+Scenario,TCP flows (rate limited),TCP flows (unlimited),CBR traffic,Stochastic traffic,Total scenarios,Runs,Repeats,Completed
+"Multiple streaming video clients, no background","1, 2, 4, 8 @20 Mb/s/flow",-,-,-,4,10,40,
+"Multiple streaming video clients, no background + CBR UDP","1, 2, 4, 8 @20 Mb/s/flow",-,"10, 20, 40 Mb/s CBR UDP",-,12,10,120,
+"Multiple streaming video clients, stochastic UDP backround","1, 2, 4, 8 @20 Mb/s/flow",-,-,"10, 20, 40 Mb/s Poisson",12,10,120,
+"Multiple streaming video clients, stochastic UDP backround + CBR UDP","1, 2, 4, 8 @20 Mb/s/flow",-,"10, 20, 40 Mb/s CBR UDP","10, 20, 40 Mb/s Poisson",36,10,360,
+"2 streaming video clients, large file downloads, no background",2 @20 Mb/s/flow,"1, 2, 4, 8 TCP flows",-,-,4,10,40,
+"2 streaming video clients, large file downloads, no background + CBR UDP",2 @20 Mb/s/flow,"1, 2, 4, 8 TCP flows","10, 20, 40 Mb/s CBR UDP",-,6,10,60,
+"2 streaming video clients, large file downloads, stochastic UDP background",2 @20 Mb/s/flow,"1, 2, 4, 8 TCP flows",-,"10, 20, 40 Mb/s Poisson",12,10,120,
+"2 streaming video clients, large file downloads, stochastic UDP background + CBR UDP",2 @20 Mb/s/flow,"1, 2, 4, 8 TCP flows","10, 20, 40 Mb/s CBR UDP","10, 20, 40 Mb/s Poisson",36,10,360,

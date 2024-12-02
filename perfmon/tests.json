@@ -5,12 +5,6 @@
 			"name": "client1-mgmt",
 			"cmd": "iperf3 -c server1 -C reno -R -t 60",
 			"persist": false,
-			"start_time": 1
-		},
-		"host2": {
-			"name": "server1-mgmt",
-			"cmd": "iperf3 -s -1",
-			"persist": false,
 			"start_time": 0
 		}
 	},
@@ -21,27 +15,15 @@
 			"cmd": "iperf3 -c server2 -R -u -b 90M -t 60",
 			"persist": false,
 			"start_time": 20
-		},
-		"host2": {
-			"name": "server2-mgmt",
-			"cmd": "iperf3 -s -1",
-			"persist": false,
-			"start_time": 0
 		}
 	},
 	{
 		"testname": "iperf UDP download #2",
 		"host1": {
 			"name": "client3-mgmt",
-			"cmd": "iperf3 -c server3 -R -u -b 20M -t 60",
+			"cmd": "iperf3 -c server3 -R -u -b 30M -t 60",
 			"persist": false,
 			"start_time": 40
-		},
-		"host2": {
-			"name": "server3-mgmt",
-			"cmd": "iperf3 -s -1",
-			"persist": false,
-			"start_time": 0
 		}
 	}
 ]

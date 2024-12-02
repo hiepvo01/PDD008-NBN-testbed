@@ -1,0 +1,83 @@
+[
+  {
+    "testname": "iperf TCP-reno rate-limited download #1",
+    "host1": {
+      "name": "client1-mgmt",
+      "cmd": "iperf3 -c server1 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 0
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #2",
+    "host1": {
+      "name": "client2-mgmt",
+      "cmd": "iperf3 -c server2 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 1
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #3",
+    "host1": {
+      "name": "client3-mgmt",
+      "cmd": "iperf3 -c server3 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 2
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #4",
+    "host1": {
+      "name": "client4-mgmt",
+      "cmd": "iperf3 -c server4 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 3
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #5",
+    "host1": {
+      "name": "client5-mgmt",
+      "cmd": "iperf3 -c server5 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 4
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #6",
+    "host1": {
+      "name": "client6-mgmt",
+      "cmd": "iperf3 -c server6 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 5
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #7",
+    "host1": {
+      "name": "client7-mgmt",
+      "cmd": "iperf3 -c server7 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 6
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #8",
+    "host1": {
+      "name": "client8-mgmt",
+      "cmd": "iperf3 -c server8 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 7
+    }
+  },
+  {
+    "testname": "iperf UDP download #9",
+    "host1": {
+      "name": "client9-mgmt",
+      "cmd": "iperf3 -c server9 -R -u -b 40.0M -t 60",
+      "persist": false,
+      "start_time": 8
+    }
+  }
+]

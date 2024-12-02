@@ -17,31 +17,35 @@ pids = []
 cwd = os.getcwd()
 
 for test in tests:
-	print ('Starting test: %s' % test['testname']);
+	print ('Starting test: %s' % test['testname']); 
+	
+	if 'host1' in test:
 
 # Start host1 process (generally server) first
-	pid = os.fork()
+		pid = os.fork()
 
-	if pid:
-		pids.append ({
-			'pid': pid,
-			'host': test['host1']['name']
-		})
-	else:
-		os.system ('ssh -o StrictHostKeyChecking=no root@%s "PATH=$PATH:%s sleep %i ; %s 2>&1 > /dev/null"' % (test['host1']['name'], cwd, test['host1']['start_time'], test['host1']['cmd']))
-		exit (0)
+		if pid:
+			pids.append ({
+				'pid': pid,
+				'host': test['host1']['name']
+			})
+		else:
+			os.system ('ssh -o StrictHostKeyChecking=no root@%s "PATH=$PATH:%s sleep %i ; %s 2>&1 > /dev/null"' % (test['host1']['name'], cwd, test['host1']['start_time'], test['host1']['cmd']))
+			exit (0)
 
 # Start host2 process 
-	pid = os.fork()
 
-	if pid:
-		pids.append ({
-			'pid': pid,
-			'host': test['host1']['name']
-		})
-	else:
-		os.system ('ssh -o StrictHostKeyChecking=no root@%s "PATH=$PATH:%s sleep %i ; %s 2>&1 > /dev/null"' % (test['host2']['name'], cwd, test['host2']['start_time'], test['host2']['cmd']))
-		exit (0)
+	if 'host2' in test:
+		pid = os.fork()
+
+		if pid:
+			pids.append ({
+				'pid': pid,
+				'host': test['host2']['name']
+			})
+		else:
+			os.system ('ssh -o StrictHostKeyChecking=no root@%s "PATH=$PATH:%s sleep %i ; %s 2>&1 > /dev/null"' % (test['host2']['name'], cwd, test['host2']['start_time'], test['host2']['cmd']))
+			exit (0)
 
 print ('Waiting for pending tasks to complete')
 

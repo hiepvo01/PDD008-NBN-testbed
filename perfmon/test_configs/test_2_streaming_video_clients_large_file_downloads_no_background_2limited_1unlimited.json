@@ -1,0 +1,29 @@
+[
+  {
+    "testname": "iperf TCP-reno rate-limited download #1",
+    "host1": {
+      "name": "client1-mgmt",
+      "cmd": "iperf3 -c server1 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 0
+    }
+  },
+  {
+    "testname": "iperf TCP-reno rate-limited download #2",
+    "host1": {
+      "name": "client2-mgmt",
+      "cmd": "iperf3 -c server2 -C reno -R -b 20.0M -t 60",
+      "persist": false,
+      "start_time": 1
+    }
+  },
+  {
+    "testname": "iperf TCP-reno unlimited download #3",
+    "host1": {
+      "name": "client3-mgmt",
+      "cmd": "iperf3 -c server3 -C reno -R -t 60",
+      "persist": false,
+      "start_time": 2
+    }
+  }
+]

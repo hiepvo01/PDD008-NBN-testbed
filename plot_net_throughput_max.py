@@ -1,371 +1,540 @@
-import numpy as np
-import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import os
-import glob
 from scipy.signal import medfilt
-from peak_speed_detect import max_peak_speed_detect, add_peak_detection_to_figure
+from peak_speed_detect import max_peak_speed_detect
+from sklearn.metrics import confusion_matrix, classification_report
 
 # Define folder paths
-LOG_FOLDER = 'perfmon'
 OUTPUT_FOLDER = 'extracted_data'
 
-def ensure_folder_exists(folder_path):
-    """Create folder if it doesn't exist"""
-    if not os.path.exists(folder_path):
-        os.makedirs(folder_path)
-
-def find_log_pairs(folder_path=LOG_FOLDER):
+def calculate_peak_detection_accuracy(time, throughput, ground_truth, window_size=1000):
     """
-    Find pairs of log files ending with -r1.log and -r2.log in the specified folder.
-    Returns a dictionary of pairs with their base names as keys.
+    Calculate confusion matrix and metrics for peak detection vs ground truth.
     """
-    # Find all r1 and r2 log files
-    r1_files = glob.glob(os.path.join(folder_path, '*-r1.log'))
-    r2_files = glob.glob(os.path.join(folder_path, '*-r2.log'))
+    # Get peak detection results
+    peaking, peaks, filtered = max_peak_speed_detect(time, throughput, [100, window_size])
     
-    # Create pairs dictionary
-    pairs = {}
-    for r1_file in r1_files:
-        # Get base name by removing -r1.log
-        base_name = r1_file[:-7]
-        # Check if corresponding r2 file exists
-        r2_file = f"{base_name}-r2.log"
-        if r2_file in r2_files:
-            # Use just the basename without path as the key
-            key = os.path.basename(base_name)
-            pairs[key] = (r1_file, r2_file)
+    # Calculate confusion matrix
+    cm = confusion_matrix(ground_truth, peaking)
     
-    return pairs
+    # Calculate metrics
+    report = classification_report(ground_truth, peaking, output_dict=True)
+    
+    return cm, report, peaking, peaks, filtered
 
-def process_log_to_csv(input_log, output_csv):
-    """
-    Process log file to CSV with specified column names.
-    """
-    # Read the data, skipping the first line (comments)
-    df = pd.read_csv(input_log, delimiter=' ', skiprows=1, header=None)
+def plot_confusion_matrix(cm, title="Confusion Matrix"):
+    """Create a plotly heatmap for confusion matrix visualization."""
+    fig = go.Figure(data=go.Heatmap(
+        z=cm,
+        x=['No Peak', 'Peak'],
+        y=['No Peak', 'Peak'],
+        text=cm,
+        texttemplate="%{text}",
+        textfont={"size": 16},
+        colorscale='Blues'
+    ))
     
-    # Define the column names
-    columns = [
-        'time',
-        'rx_packets',
-        'rx_bytes',
-        'tx_packets',
-        'tx_bytes',
-        'qdisc',
-        'bytes',
-        'packets',
-        'drops',
-        'overlimits',
-        'BACKLOG'
-    ]
+    fig.update_layout(
+        title=title,
+        xaxis_title="Predicted",
+        yaxis_title="Actual",
+        height=400
+    )
     
-    # Assign column names to the DataFrame
-    df.columns = columns
+    return fig
+
+def load_processed_data(file_path):
+    """Load processed CSV data"""
+    return pd.read_csv(file_path)
+
+def create_throughput_figures(df, is_downstream=True, show_peak_detection=False, window_size=1000):
+    """Create throughput visualization figures"""
+    direction = "Downstream" if is_downstream else "Upstream"
     
-    # Ensure output folder exists
-    ensure_folder_exists(OUTPUT_FOLDER)
+    # Use data starting from the second row
+    t = df['relative_time'].values
+    interval = np.mean(np.diff(t))
     
-    # Save to CSV in the output folder
-    output_path = os.path.join(OUTPUT_FOLDER, output_csv)
-    df.to_csv(output_path, index=False)
-    return df
-
-def plot_net_throughput(downstream_log, upstream_log, show_peak_detection=False):
-    """
-    Process the log files and create plots.
-    """
-    # Convert logs to CSV and load data
-    ds = process_log_to_csv(downstream_log, 'downstream.csv')
-    us = process_log_to_csv(upstream_log, 'upstream.csv')
-
-    # Calculate relative time
-    t_ds = ds['time'].iloc[1:].values - ds['time'].iloc[1]
-    t_us = us['time'].iloc[1:].values - us['time'].iloc[1]
-
-    # Calculate intervals
-    ds_interval = np.mean(np.diff(t_ds))
-    us_interval = np.mean(np.diff(t_us))
-
-    # Create figures
     figures = []
     
-    # Figure 1: Downstream packets/sec
+    # Calculate packet rates (following MATLAB implementation)
+    tx_packet_rate = df['tx_packets'].values / interval
+    rx_packet_rate = df['rx_packets'].values / interval
+    
+    # Packets/sec figure
     fig1 = go.Figure()
-    fig1.add_trace(go.Scatter(x=t_ds, 
-                             y=ds['tx_packets'].iloc[1:] / ds_interval, 
+    fig1.add_trace(go.Scatter(x=t, 
+                             y=tx_packet_rate, 
                              name='Tx',
-                             line=dict(color='blue')))
-    fig1.add_trace(go.Scatter(x=t_ds, 
-                             y=ds['rx_packets'].iloc[1:] / ds_interval, 
+                             line=dict(color='blue'),
+                             showlegend=is_downstream))
+    fig1.add_trace(go.Scatter(x=t, 
+                             y=rx_packet_rate, 
                              name='Rx',
-                             line=dict(color='red')))
+                             line=dict(color='red'),
+                             showlegend=is_downstream))
     fig1.update_layout(
-        title='Downstream Throughput (packets/s)',
+        title=f'{direction} Throughput (packets/s)',
         xaxis_title='Time (seconds)',
-        yaxis_title='Downstream throughput (packets/s)',
-        showlegend=True,
+        yaxis_title=f'{direction} throughput (packets/s)',
         template='plotly_white',
         height=500,
         xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True)
-    )
-    figures.append(fig1)
-
-    # Figure 2: Downstream Mbits/sec
-    fig2 = go.Figure()
-    fig2.add_trace(go.Scatter(x=t_ds, 
-                             y=8 * ds['tx_bytes'].iloc[1:] / ds_interval / 1e6, 
-                             name='Tx',
-                             line=dict(color='blue')))
-    fig2.add_trace(go.Scatter(x=t_ds, 
-                             y=8 * ds['rx_bytes'].iloc[1:] / ds_interval / 1e6, 
-                             name='Rx',
-                             line=dict(color='red')))
-    fig2.update_layout(
-        title='Downstream Throughput (Mb/s)',
-        xaxis_title='Time (seconds)',
-        yaxis_title='Downstream throughput (Mb/s)',
-        showlegend=True,
-        template='plotly_white',
-        height=500,
-        xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True)
+        yaxis=dict(showgrid=True),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        )
     )
     
-    # Add peak detection if enabled
     if show_peak_detection:
-        tx_throughput = ds['tx_bytes'].iloc[1:].values
-        rx_throughput = ds['rx_bytes'].iloc[1:].values
-        fig2 = add_peak_detection_to_figure(fig2, t_ds, tx_throughput)
+        peaking, peaks, filtered = max_peak_speed_detect(t, tx_packet_rate, [100, window_size])
+        max_val = np.max(tx_packet_rate)
+        fig1.add_trace(go.Scatter(x=t, y=filtered, name='Filtered', 
+                                line=dict(color='green', dash='dot'), showlegend=is_downstream))
+        fig1.add_trace(go.Scatter(x=t, y=peaks, name='Peaks', 
+                                line=dict(color='purple', dash='dash'), showlegend=is_downstream))
+        fig1.add_trace(go.Scatter(x=t, y=peaking * max_val, name='Peaking', 
+                                line=dict(color='orange'), showlegend=is_downstream))
+    
+    figures.append(fig1)
+
+    # Calculate bit rates (Mb/s)
+    tx_bit_rate = 8 * df['tx_bytes'].values / interval / 1e6
+    rx_bit_rate = 8 * df['rx_bytes'].values / interval / 1e6
+    
+    # Mbits/sec figure
+    fig2 = go.Figure()
+    fig2.add_trace(go.Scatter(x=t, 
+                             y=tx_bit_rate, 
+                             name='Tx',
+                             line=dict(color='blue'),
+                             showlegend=is_downstream))
+    fig2.add_trace(go.Scatter(x=t, 
+                             y=rx_bit_rate, 
+                             name='Rx',
+                             line=dict(color='red'),
+                             showlegend=is_downstream))
+    fig2.update_layout(
+        title=f'{direction} Throughput (Mb/s)',
+        xaxis_title='Time (seconds)',
+        yaxis_title=f'{direction} throughput (Mb/s)',
+        template='plotly_white',
+        height=500,
+        xaxis=dict(showgrid=True),
+        yaxis=dict(showgrid=True),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        )
+    )
+    
+    if show_peak_detection:
+        peaking, peaks, filtered = max_peak_speed_detect(t, tx_bit_rate, [100, window_size])
+        max_val = np.max(tx_bit_rate)
+        fig2.add_trace(go.Scatter(x=t, y=filtered, name='Filtered', 
+                                line=dict(color='green', dash='dot'), showlegend=is_downstream))
+        fig2.add_trace(go.Scatter(x=t, y=peaks, name='Peaks', 
+                                line=dict(color='purple', dash='dash'), showlegend=is_downstream))
+        fig2.add_trace(go.Scatter(x=t, y=peaking * max_val, name='Peaking', 
+                                line=dict(color='orange'), showlegend=is_downstream))
     
     figures.append(fig2)
 
-    # Figure 3: Upstream packets/sec
+    # Buffer occupancy figure
     fig3 = go.Figure()
-    fig3.add_trace(go.Scatter(x=t_us, 
-                             y=us['tx_packets'].iloc[1:] / us_interval, 
-                             name='Tx',
-                             line=dict(color='blue')))
-    fig3.add_trace(go.Scatter(x=t_us, 
-                             y=us['rx_packets'].iloc[1:] / us_interval, 
-                             name='Rx',
-                             line=dict(color='red')))
+    fig3.add_trace(go.Scatter(x=t, 
+                             y=df['queue_size'],
+                             name='Queue Size',
+                             line=dict(color='blue'),
+                             showlegend=is_downstream))
+    fig3.add_trace(go.Scatter(x=t,
+                             y=df['queue_exists'] * df['queue_size'].max(),
+                             name='Queue Exists',
+                             line=dict(color='red', dash='dash'),
+                             showlegend=is_downstream))
     fig3.update_layout(
-        title='Upstream Throughput (packets/s)',
+        title=f'{direction} Buffer Occupancy',
         xaxis_title='Time (seconds)',
-        yaxis_title='Upstream throughput (packets/s)',
-        showlegend=True,
+        yaxis_title=f'{direction} tx queue buffer occupancy (packets)',
         template='plotly_white',
         height=500,
         xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True)
+        yaxis=dict(showgrid=True),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        )
     )
+    
     figures.append(fig3)
+    
+    return figures
 
-    # Figure 4: Upstream Mbits/sec
-    fig4 = go.Figure()
-    fig4.add_trace(go.Scatter(x=t_us, 
-                             y=8 * us['tx_bytes'].iloc[1:] / us_interval / 1e6, 
-                             name='Tx',
-                             line=dict(color='blue')))
-    fig4.add_trace(go.Scatter(x=t_us, 
-                             y=8 * us['rx_bytes'].iloc[1:] / us_interval / 1e6, 
-                             name='Rx',
-                             line=dict(color='red')))
-    fig4.update_layout(
-        title='Upstream Throughput (Mb/s)',
-        xaxis_title='Time (seconds)',
-        yaxis_title='Upstream throughput (Mb/s)',
-        showlegend=True,
-        template='plotly_white',
-        height=500,
-        xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True)
-    )
+def parse_log_filename(filename):
+    """Parse log filename to extract scenario details"""
+    # Remove the stream direction and location suffixes
+    base = filename.replace('_upstream.csv', '').replace('_downstream.csv', '')
+    base = base.replace('-r1.log', '').replace('-r2.log', '')
     
-    # Add peak detection if enabled
-    if show_peak_detection:
-        tx_throughput = us['tx_bytes'].iloc[1:].values
-        rx_throughput = us['rx_bytes'].iloc[1:].values
-        fig4 = add_peak_detection_to_figure(fig4, t_us, tx_throughput)
+    info = {
+        'full_name': base,
+        'type': 'unknown',
+        'scenario': '',
+        'limited_flows': 0,
+        'unlimited_flows': 0,
+        'cbr_rate': 0
+    }
     
-    figures.append(fig4)
-
-    # Figure 5: Downstream buffer occupancy
-    fig5 = go.Figure()
-    fig5.add_trace(go.Scatter(x=t_ds, 
-                             y=ds['BACKLOG'].iloc[1:].values - ds['BACKLOG'].iloc[:-1].values,
-                             line=dict(color='blue')))
-    fig5.update_layout(
-        title='Downstream Buffer Occupancy',
-        xaxis_title='Time (seconds)',
-        yaxis_title='Downstream tx queue buffer occupancy (packets)',
-        showlegend=False,
-        template='plotly_white',
-        height=500,
-        xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True)
-    )
-    figures.append(fig5)
-
-    # Figure 6: Upstream buffer occupancy
-    fig6 = go.Figure()
-    fig6.add_trace(go.Scatter(x=t_us,
-                             y=us['BACKLOG'].iloc[1:].values - us['BACKLOG'].iloc[:-1].values,
-                             line=dict(color='blue')))
-    fig6.update_layout(
-        title='Upstream Buffer Occupancy',
-        xaxis_title='Time (seconds)',
-        yaxis_title='Upstream tx queue buffer occupancy (packets)',
-        showlegend=False,
-        template='plotly_white',
-        height=500,
-        xaxis=dict(showgrid=True),
-        yaxis=dict(showgrid=True)
-    )
-    figures.append(fig6)
-
-    # Create summary DataFrames with relative time
-    downstream_summary = pd.DataFrame({
-        'time': t_ds,
-        'rx_packets': ds['rx_packets'].iloc[1:].values,
-        'rx_bytes': ds['rx_bytes'].iloc[1:].values,
-        'tx_packets': ds['tx_packets'].iloc[1:].values,
-        'tx_bytes': ds['tx_bytes'].iloc[1:].values,
-        'bytes': ds['bytes'].iloc[1:].values,
-        'packets': ds['packets'].iloc[1:].values,
-        'drops': ds['drops'].iloc[1:].values,
-        'overlimits': ds['overlimits'].iloc[1:].values,
-        'BACKLOG': ds['BACKLOG'].iloc[1:].values
-    })
+    try:
+        # Split into parts
+        parts = base.split('_')
+        
+        # Pattern 1: Xlimited_Yunlimited format
+        limited_idx = -1
+        unlimited_idx = -1
+        for i, part in enumerate(parts):
+            if part.endswith('limited') and part != 'limited':
+                try:
+                    limited_idx = i
+                    info['limited_flows'] = int(part[:-7])
+                except ValueError:
+                    pass
+            if part.endswith('unlimited') and part != 'unlimited':
+                try:
+                    unlimited_idx = i
+                    info['unlimited_flows'] = int(part[:-9])
+                except ValueError:
+                    pass
+                    
+        # Pattern 2: Xflows format
+        flows_idx = -1
+        for i, part in enumerate(parts):
+            if part.endswith('flows'):
+                try:
+                    flows_idx = i
+                    info['limited_flows'] = int(part[:-5])
+                except ValueError:
+                    pass
+        
+        # Check for CBR rate
+        for part in parts:
+            if part.endswith('mbps'):
+                try:
+                    info['cbr_rate'] = int(part[:-4])
+                except ValueError:
+                    pass
+        
+        # Extract scenario name
+        if info['limited_flows'] > 0 and info['unlimited_flows'] > 0:
+            # Mixed flows case
+            scenario_end = min(i for i in [limited_idx, unlimited_idx] if i >= 0)
+            info['type'] = 'mixed'
+        elif flows_idx >= 0:
+            # Simple flows case
+            scenario_end = flows_idx
+            info['type'] = 'limited_only'
+        elif limited_idx >= 0:
+            # Single limited flows case
+            scenario_end = limited_idx
+            info['type'] = 'limited_only'
+        else:
+            scenario_end = len(parts) - 1
+            
+        if scenario_end > 1:
+            scenario_parts = []
+            for i in range(1, scenario_end):
+                if not any(x in parts[i] for x in ['flows', 'limited', 'unlimited', 'mbps']):
+                    scenario_parts.append(parts[i])
+            info['scenario'] = '_'.join(scenario_parts)
+        
+        # Add CBR modifier if present
+        if info['cbr_rate'] > 0:
+            info['type'] += '_cbr'
+            
+    except Exception as e:
+        print(f"Error parsing filename {filename}: {str(e)}")
     
-    upstream_summary = pd.DataFrame({
-        'time': t_us,
-        'rx_packets': us['rx_packets'].iloc[1:].values,
-        'rx_bytes': us['rx_bytes'].iloc[1:].values,
-        'tx_packets': us['tx_packets'].iloc[1:].values,
-        'tx_bytes': us['tx_bytes'].iloc[1:].values,
-        'bytes': us['bytes'].iloc[1:].values,
-        'packets': us['packets'].iloc[1:].values,
-        'drops': us['drops'].iloc[1:].values,
-        'overlimits': us['overlimits'].iloc[1:].values,
-        'BACKLOG': us['BACKLOG'].iloc[1:].values
-    })
-    
-    # Save summary DataFrames to CSV with pair name prefix in the output folder
-    base_name = os.path.basename(downstream_log).replace('-r1.log', '')
-    downstream_summary.to_csv(os.path.join(OUTPUT_FOLDER, f'{base_name}_downstream_summary.csv'), index=False)
-    upstream_summary.to_csv(os.path.join(OUTPUT_FOLDER, f'{base_name}_upstream_summary.csv'), index=False)
-    
-    return figures, downstream_summary, upstream_summary
+    return info
 
 def main():
     st.set_page_config(page_title="Network Throughput Analysis", layout="wide")
     st.title("Network Throughput Analysis")
 
-    # Ensure both folders exist
-    ensure_folder_exists(LOG_FOLDER)
-    ensure_folder_exists(OUTPUT_FOLDER)
-
-    # Find log file pairs
-    log_pairs = find_log_pairs()
-    
-    if not log_pairs:
-        st.error(f"No log file pairs found in the {LOG_FOLDER} directory. Please ensure log files are present and follow the naming pattern *-r1.log and *-r2.log")
+    # Find all CSV files in the output folder
+    csv_files = [f for f in os.listdir(OUTPUT_FOLDER) if f.endswith('.csv')]
+    if not csv_files:
+        st.error("No processed CSV files found in the 'extracted_data' directory.")
         return
 
-    # Create dropdown for selecting log pair
-    selected_pair = st.selectbox(
-        "Select log file pair for analysis:",
-        options=list(log_pairs.keys()),
-        format_func=lambda x: f"Pair: {x}"
+    # Parse all experiment names and create filters
+    experiments = {}
+    scenarios = set()
+    exp_types = set()
+    limited_flows = set()
+    unlimited_flows = set()
+    cbr_rates = set()
+    
+    for file in csv_files:
+        base_name = file.replace('_downstream.csv', '').replace('_upstream.csv', '')
+        if base_name not in experiments:
+            info = parse_log_filename(base_name)
+            experiments[base_name] = {
+                'info': info,
+                'downstream': None,
+                'upstream': None
+            }
+            scenarios.add(info['scenario'])
+            exp_types.add(info['type'])
+            if info['limited_flows'] > 0:
+                limited_flows.add(info['limited_flows'])
+            if info['unlimited_flows'] > 0:
+                unlimited_flows.add(info['unlimited_flows'])
+            if info['cbr_rate'] > 0:
+                cbr_rates.add(info['cbr_rate'])
+        
+        if 'downstream' in file:
+            experiments[base_name]['downstream'] = file
+        elif 'upstream' in file:
+            experiments[base_name]['upstream'] = file
+
+    # Create filter controls
+    st.sidebar.header("Filters")
+    
+    # Experiment type filter
+    selected_type = st.sidebar.selectbox(
+        "Experiment Type",
+        ['All'] + sorted(list(exp_types)),
+        help="Filter by experiment type"
+    )
+    
+    # Scenario filter
+    selected_scenario = st.sidebar.selectbox(
+        "Scenario",
+        ['All'] + sorted(list(scenarios)),
+        help="Filter by scenario name"
+    )
+    
+    # Flow filters
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        selected_limited = st.selectbox(
+            "Limited Flows",
+            ['All'] + sorted(list(limited_flows)),
+            help="Number of rate-limited TCP flows"
+        )
+    
+    with col2:
+        selected_unlimited = st.selectbox(
+            "Unlimited Flows",
+            ['All'] + sorted(list(unlimited_flows)),
+            help="Number of unlimited TCP flows"
+        )
+    
+    # CBR rate filter
+    selected_cbr = st.sidebar.selectbox(
+        "CBR Rate (Mbps)",
+        ['All'] + sorted(list(cbr_rates)),
+        help="CBR traffic rate"
     )
 
-    # Add checkbox for peak detection
-    show_peak_detection = st.checkbox("Show Peak Speed Detection", value=False)
+    # Filter experiments based on selections
+    filtered_experiments = {}
+    for name, exp in experiments.items():
+        info = exp['info']
+        if (selected_type == 'All' or info['type'] == selected_type) and \
+           (selected_scenario == 'All' or info['scenario'] == selected_scenario) and \
+           (selected_limited == 'All' or info['limited_flows'] == selected_limited) and \
+           (selected_unlimited == 'All' or info['unlimited_flows'] == selected_unlimited) and \
+           (selected_cbr == 'All' or info['cbr_rate'] == selected_cbr):
+            filtered_experiments[name] = exp
 
-    if selected_pair:
-        downstream_log, upstream_log = log_pairs[selected_pair]
+    # Display selected experiment
+    if not filtered_experiments:
+        st.warning("No experiments match the selected filters.")
+        return
+
+    # Create columns for remaining controls
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        selected_exp = st.selectbox(
+            "Select experiment for analysis:",
+            options=list(filtered_experiments.keys()),
+            format_func=lambda x: filtered_experiments[x]['info']['full_name']
+        )
+    
+    with col2:
+        show_peak_detection = st.checkbox(
+            "Show Peak Detection Analysis",
+            value=False,
+            help="Enable to show peak detection analysis on all plots"
+        )
+
+    if show_peak_detection:
+        window_size = st.sidebar.slider(
+            "Window Size (ms)",
+            min_value=100,
+            max_value=5000,
+            value=1000,
+            step=100,
+            help="Window size for peak detection analysis"
+        )
+    else:
+        window_size = 1000
+
+    if selected_exp:
+        exp_files = filtered_experiments[selected_exp]
         try:
-            figures, downstream_summary, upstream_summary = plot_net_throughput(
-                downstream_log, 
-                upstream_log,
-                show_peak_detection=show_peak_detection
+            # Load data
+            downstream_df = load_processed_data(os.path.join(OUTPUT_FOLDER, exp_files['downstream']))
+            upstream_df = load_processed_data(os.path.join(OUTPUT_FOLDER, exp_files['upstream']))
+
+            # Create throughput figures
+            downstream_figs = create_throughput_figures(
+                downstream_df, 
+                is_downstream=True,
+                show_peak_detection=show_peak_detection,
+                window_size=window_size
             )
-            
-            # Display all figures in a grid layout
-            for i in range(0, len(figures), 2):
+            upstream_figs = create_throughput_figures(
+                upstream_df, 
+                is_downstream=False,
+                show_peak_detection=show_peak_detection,
+                window_size=window_size
+            )
+
+            # Display throughput figures in grid layout
+            for i in range(len(downstream_figs)):
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.plotly_chart(figures[i], use_container_width=True)
+                    st.plotly_chart(downstream_figs[i], use_container_width=True)
                 with col2:
-                    if i + 1 < len(figures):
-                        st.plotly_chart(figures[i + 1], use_container_width=True)
-
-            st.success(f"CSV files have been generated for pair {selected_pair} in the '{OUTPUT_FOLDER}' folder:")
-            
-            st.markdown("### Raw Data Files")
-            st.write("These files contain the original data with unix timestamps:")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write("**downstream.csv**")
-                down_path = os.path.join(OUTPUT_FOLDER, 'downstream.csv')
-                if os.path.exists(down_path):
-                    df_down = pd.read_csv(down_path)
-                    st.dataframe(df_down.head(3))
-            with col2:
-                st.write("**upstream.csv**")
-                up_path = os.path.join(OUTPUT_FOLDER, 'upstream.csv')
-                if os.path.exists(up_path):
-                    df_up = pd.read_csv(up_path)
-                    st.dataframe(df_up.head(3))
-
-            st.markdown("### Processed Summary Files")
-            st.write("These files contain the processed data with relative timestamps (starting from 0):")
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**{selected_pair}_downstream_summary.csv**")
-                st.dataframe(downstream_summary.head(3))
-            with col2:
-                st.write(f"**{selected_pair}_upstream_summary.csv**")
-                st.dataframe(upstream_summary.head(3))
-
-            st.markdown("### Generated Files Location")
-            st.info(f"""
-            All CSV files are saved in the '{OUTPUT_FOLDER}' folder:
-            1. downstream.csv
-            2. upstream.csv
-            3. {selected_pair}_downstream_summary.csv
-            4. {selected_pair}_upstream_summary.csv
-            """)
-
-            st.markdown("### Column Descriptions")
-            st.markdown("""
-            - **time**: Unix timestamp (raw) or relative seconds (summary)
-            - **rx_packets**: Number of received packets
-            - **rx_bytes**: Number of received bytes
-            - **tx_packets**: Number of transmitted packets
-            - **tx_bytes**: Number of transmitted bytes
-            - **bytes**: Queue bytes
-            - **packets**: Queue packets
-            - **drops**: Number of dropped packets
-            - **overlimits**: Number of times the queue limit was exceeded
-            - **BACKLOG**: Current queue depth in packets
-            """)
+                    st.plotly_chart(upstream_figs[i], use_container_width=True)
 
             if show_peak_detection:
-                st.markdown("### Peak Speed Detection")
+                st.subheader("Peak Detection Accuracy Analysis")
+                
+                # Calculate confusion matrices and metrics
+                ds_time = downstream_df['relative_time'].values
+                us_time = upstream_df['relative_time'].values
+                
+                # Downstream analysis
+                ds_tx_rate = downstream_df['tx_bytes'].values / np.mean(np.diff(ds_time))
+                ds_cm, ds_report, ds_peaking, ds_peaks, ds_filtered = calculate_peak_detection_accuracy(
+                    ds_time,
+                    ds_tx_rate,
+                    downstream_df['queue_exists'].values,
+                    window_size
+                )
+                
+                # Upstream analysis
+                us_tx_rate = upstream_df['tx_bytes'].values / np.mean(np.diff(us_time))
+                us_cm, us_report, us_peaking, us_peaks, us_filtered = calculate_peak_detection_accuracy(
+                    us_time,
+                    us_tx_rate,
+                    upstream_df['queue_exists'].values,
+                    window_size
+                )
+
+                # Display confusion matrices
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.plotly_chart(plot_confusion_matrix(ds_cm, "Downstream Confusion Matrix"), use_container_width=True)
+                    st.write("**Downstream Classification Metrics:**")
+                    metrics_df = pd.DataFrame({
+                        'Metric': ['Accuracy', 'Precision', 'Recall', 'F1-Score'],
+                        'Value': [
+                            ds_report['accuracy'],
+                            ds_report['1']['precision'],
+                            ds_report['1']['recall'],
+                            ds_report['1']['f1-score']
+                        ]
+                    })
+                    st.dataframe(metrics_df.set_index('Metric').style.format('{:.3f}'), use_container_width=True)
+                
+                with col2:
+                    st.plotly_chart(plot_confusion_matrix(us_cm, "Upstream Confusion Matrix"), use_container_width=True)
+                    st.write("**Upstream Classification Metrics:**")
+                    metrics_df = pd.DataFrame({
+                        'Metric': ['Accuracy', 'Precision', 'Recall', 'F1-Score'],
+                        'Value': [
+                            us_report['accuracy'],
+                            us_report['1']['precision'],
+                            us_report['1']['recall'],
+                            us_report['1']['f1-score']
+                        ]
+                    })
+                    st.dataframe(metrics_df.set_index('Metric').style.format('{:.3f}'), use_container_width=True)
+
+            # Display experiment info
+            st.subheader("Experiment Information")
+            info = filtered_experiments[selected_exp]['info']
+            
+            # Create info table
+            info_data = {
+                'Parameter': [
+                    'Scenario',
+                    'Experiment Type',
+                    'Limited TCP Flows',
+                    'Unlimited TCP Flows',
+                    'CBR Rate (Mbps)'
+                ],
+                'Value': [
+                    info['scenario'],
+                    info['type'],
+                    info['limited_flows'],
+                    info['unlimited_flows'],
+                    info['cbr_rate']
+                ]
+            }
+            st.table(pd.DataFrame(info_data))
+
+            # Display queue statistics
+            st.subheader("Queue Statistics")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Downstream Queue Statistics**")
+                st.write(f"Average queue size: {downstream_df['queue_size'].mean():.2f} packets")
+                st.write(f"Maximum queue size: {downstream_df['queue_size'].max():.2f} packets")
+                st.write(f"Time with queue: {(downstream_df['queue_exists'].mean() * 100):.2f}%")
+                if show_peak_detection:
+                    st.write(f"Time with peaks: {(ds_peaking.mean() * 100):.2f}%")
+            
+            with col2:
+                st.write("**Upstream Queue Statistics**")
+                st.write(f"Average queue size: {upstream_df['queue_size'].mean():.2f} packets")
+                st.write(f"Maximum queue size: {upstream_df['queue_size'].max():.2f} packets")
+                st.write(f"Time with queue: {(upstream_df['queue_exists'].mean() * 100):.2f}%")
+                if show_peak_detection:
+                    st.write(f"Time with peaks: {(us_peaking.mean() * 100):.2f}%")
+
+            if show_peak_detection:
                 st.markdown("""
-                The peak speed detection analysis shows:
-                - **Filtered Throughput** (green dotted line): Median-filtered version of the throughput
-                - **Peak Throughput** (purple dashed line): Maximum throughput in each time window
-                - **Peak Speed Score** (orange line, right axis): Proportion of time the throughput stays within 20% of peak value
+                ### Understanding the Analysis
+                - **Confusion Matrix**: Shows the agreement between queue existence and peak detection
+                - **Accuracy**: Overall correct predictions (both peaks and non-peaks)
+                - **Precision**: Proportion of correctly identified peaks among all predicted peaks
+                - **Recall**: Proportion of actual peaks that were correctly identified
+                - **F1-Score**: Harmonic mean of precision and recall (balance between precision and recall)
                 """)
 
         except Exception as e:
-            st.error(f"Error processing log files: {str(e)}")
+            st.error(f"Error processing data: {str(e)}")
+            st.exception(e)
 
 if __name__ == "__main__":
     main()

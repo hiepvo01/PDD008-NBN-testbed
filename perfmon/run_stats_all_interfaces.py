@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import os
+import sys
 import math
 import json
 import argparse
@@ -61,7 +62,7 @@ print ('Waiting (approximately %s seconds) for pending tasks to complete' % args
 
 for pid in pids:
 	try:
-		os.waitpid (pid['pid'], 0)
-		print ('Completed on host %s interface %s' % (pid['host'], pid['interface']))
+		os.waitpid (-1, 0)
+		print ('Completed on host %s interface %s' % (pid['host'], pid['interface']), file = sys.stderr)
 	except ChildProcessError:
-		print ('All done')
+		print ('All done', file = sys.stderr)

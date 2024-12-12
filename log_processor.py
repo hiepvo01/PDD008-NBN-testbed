@@ -4,7 +4,7 @@ import os
 import glob
 
 # Define folder paths
-LOG_FOLDER = 'perfmon'
+LOG_FOLDER = 'raw_data'
 OUTPUT_FOLDER = 'extracted_data'
 
 def ensure_folder_exists(folder_path):
@@ -12,21 +12,30 @@ def ensure_folder_exists(folder_path):
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
 
-def find_log_pairs(folder_path=LOG_FOLDER):
+def find_log_pairs(base_folder=LOG_FOLDER):
     """
-    Find pairs of log files ending with -r1.log and -r2.log in the specified folder.
-    Returns a dictionary of pairs with their base names as keys.
+    Find pairs of log files ending with -r1.log and -r2.log in all subfolders.
+    Returns a dictionary of pairs with their subfolder and base names as keys.
     """
-    r1_files = glob.glob(os.path.join(folder_path, '*-r1.log'))
-    r2_files = glob.glob(os.path.join(folder_path, '*-r2.log'))
-    
     pairs = {}
-    for r1_file in r1_files:
-        base_name = r1_file[:-7]
-        r2_file = f"{base_name}-r2.log"
-        if r2_file in r2_files:
-            key = os.path.basename(base_name)
-            pairs[key] = (r1_file, r2_file)
+    
+    # Walk through all subfolders
+    for root, _, _ in os.walk(base_folder):
+        r1_files = glob.glob(os.path.join(root, '*-r1.log'))
+        r2_files = glob.glob(os.path.join(root, '*-r2.log'))
+        
+        for r1_file in r1_files:
+            base_name = r1_file[:-7]
+            r2_file = f"{base_name}-r2.log"
+            if r2_file in r2_files:
+                # Get relative path from raw_data folder
+                rel_path = os.path.relpath(root, base_folder)
+                if rel_path == '.':
+                    rel_path = ''
+                    
+                # Create key that includes subfolder path
+                key = os.path.join(rel_path, os.path.basename(base_name))
+                pairs[key] = (r1_file, r2_file)
     
     return pairs
 
@@ -85,7 +94,8 @@ def process_log_to_df(input_log, time_threshold=100):
 
 def process_all_logs(queue_threshold=10, time_threshold=100):
     """
-    Process all log files and save results to CSV files.
+    Process all log files from all subfolders and save results to corresponding
+    subfolders in extracted_data.
     Only includes data for first time_threshold seconds.
     """
     ensure_folder_exists(OUTPUT_FOLDER)
@@ -94,11 +104,15 @@ def process_all_logs(queue_threshold=10, time_threshold=100):
     processed_files = []
     for base_name, (downstream_log, upstream_log) in log_pairs.items():
         try:
+            # Create output subfolder if needed
+            output_subfolder = os.path.join(OUTPUT_FOLDER, os.path.dirname(base_name))
+            ensure_folder_exists(output_subfolder)
+            
             # Process logs to DataFrames
             ds_df = process_log_to_df(downstream_log, time_threshold)
             us_df = process_log_to_df(upstream_log, time_threshold)
             
-            # Save processed data
+            # Save processed data maintaining subfolder structure
             ds_output = os.path.join(OUTPUT_FOLDER, f'{base_name}_downstream.csv')
             us_output = os.path.join(OUTPUT_FOLDER, f'{base_name}_upstream.csv')
             

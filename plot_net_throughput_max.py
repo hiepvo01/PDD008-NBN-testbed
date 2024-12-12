@@ -11,19 +11,42 @@ from sklearn.metrics import confusion_matrix, classification_report
 # Define folder paths
 OUTPUT_FOLDER = 'extracted_data'
 
+def get_available_subfolders():
+    """Get all available subfolders in the OUTPUT_FOLDER"""
+    subfolders = set([''])  # Include root folder
+    try:
+        for root, dirs, _ in os.walk(OUTPUT_FOLDER):
+            rel_path = os.path.relpath(root, OUTPUT_FOLDER)
+            if rel_path != '.':
+                subfolders.add(rel_path)
+        print(f"Found subfolders: {subfolders}")  # Debug print
+    except Exception as e:
+        print(f"Error walking directory: {str(e)}")
+    return sorted(list(subfolders))
+
+def get_csv_files(subfolder):
+    """Get all CSV files in the specified subfolder"""
+    folder_path = os.path.join(OUTPUT_FOLDER, subfolder)
+    print(f"Looking for CSV files in: {folder_path}")
+    
+    if not os.path.exists(folder_path):
+        print(f"Folder does not exist: {folder_path}")
+        return []
+        
+    files = [f for f in os.listdir(folder_path) if f.endswith('.csv')]
+    print(f"Found files in {folder_path}: {files}")
+    return files
+
+def load_processed_data(subfolder, filename):
+    """Load processed CSV data from specified subfolder"""
+    file_path = os.path.join(OUTPUT_FOLDER, subfolder, filename)
+    return pd.read_csv(file_path)
+
 def calculate_peak_detection_accuracy(time, throughput, ground_truth, window_size=1000):
-    """
-    Calculate confusion matrix and metrics for peak detection vs ground truth.
-    """
-    # Get peak detection results
+    """Calculate confusion matrix and metrics for peak detection vs ground truth."""
     peaking, peaks, filtered = max_peak_speed_detect(time, throughput, [100, window_size])
-    
-    # Calculate confusion matrix
     cm = confusion_matrix(ground_truth, peaking)
-    
-    # Calculate metrics
     report = classification_report(ground_truth, peaking, output_dict=True)
-    
     return cm, report, peaking, peaks, filtered
 
 def plot_confusion_matrix(cm, title="Confusion Matrix"):
@@ -47,21 +70,16 @@ def plot_confusion_matrix(cm, title="Confusion Matrix"):
     
     return fig
 
-def load_processed_data(file_path):
-    """Load processed CSV data"""
-    return pd.read_csv(file_path)
-
 def create_throughput_figures(df, is_downstream=True, show_peak_detection=False, window_size=1000):
     """Create throughput visualization figures"""
     direction = "Downstream" if is_downstream else "Upstream"
     
-    # Use data starting from the second row
     t = df['relative_time'].values
     interval = np.mean(np.diff(t))
     
     figures = []
     
-    # Calculate packet rates (following MATLAB implementation)
+    # Calculate packet rates
     tx_packet_rate = df['tx_packets'].values / interval
     rx_packet_rate = df['rx_packets'].values / interval
     
@@ -274,10 +292,25 @@ def main():
     st.set_page_config(page_title="Network Throughput Analysis", layout="wide")
     st.title("Network Throughput Analysis")
 
-    # Find all CSV files in the output folder
-    csv_files = [f for f in os.listdir(OUTPUT_FOLDER) if f.endswith('.csv')]
+    # Get available subfolders
+    subfolders = get_available_subfolders()
+    non_empty_subfolders = [f for f in subfolders if f != '']  # Remove empty root folder
+    
+    if not non_empty_subfolders:
+        st.error("No subfolders found in extracted_data directory.")
+        return
+        
+    # Add subfolder selector at the top of the sidebar
+    selected_subfolder = st.sidebar.selectbox(
+        "Select Data Folder",
+        options=non_empty_subfolders,  # Only show actual subfolders
+        help="Choose which folder's data to analyze"
+    )
+
+    # Find all CSV files in the selected subfolder
+    csv_files = get_csv_files(selected_subfolder)
     if not csv_files:
-        st.error("No processed CSV files found in the 'extracted_data' directory.")
+        st.error(f"No processed CSV files found in '{os.path.join(OUTPUT_FOLDER, selected_subfolder)}'")
         return
 
     # Parse all experiment names and create filters
@@ -312,43 +345,34 @@ def main():
             experiments[base_name]['upstream'] = file
 
     # Create filter controls
-    st.sidebar.header("Filters")
+    st.sidebar.header("Experiment Filters")
     
-    # Experiment type filter
     selected_type = st.sidebar.selectbox(
         "Experiment Type",
-        ['All'] + sorted(list(exp_types)),
-        help="Filter by experiment type"
+        ['All'] + sorted(list(exp_types))
     )
     
-    # Scenario filter
     selected_scenario = st.sidebar.selectbox(
         "Scenario",
-        ['All'] + sorted(list(scenarios)),
-        help="Filter by scenario name"
+        ['All'] + sorted(list(scenarios))
     )
     
-    # Flow filters
     col1, col2 = st.sidebar.columns(2)
     with col1:
         selected_limited = st.selectbox(
             "Limited Flows",
-            ['All'] + sorted(list(limited_flows)),
-            help="Number of rate-limited TCP flows"
+            ['All'] + sorted(list(limited_flows))
         )
     
     with col2:
         selected_unlimited = st.selectbox(
             "Unlimited Flows",
-            ['All'] + sorted(list(unlimited_flows)),
-            help="Number of unlimited TCP flows"
+            ['All'] + sorted(list(unlimited_flows))
         )
     
-    # CBR rate filter
     selected_cbr = st.sidebar.selectbox(
         "CBR Rate (Mbps)",
-        ['All'] + sorted(list(cbr_rates)),
-        help="CBR traffic rate"
+        ['All'] + sorted(list(cbr_rates))
     )
 
     # Filter experiments based on selections
@@ -362,7 +386,6 @@ def main():
            (selected_cbr == 'All' or info['cbr_rate'] == selected_cbr):
             filtered_experiments[name] = exp
 
-    # Display selected experiment
     if not filtered_experiments:
         st.warning("No experiments match the selected filters.")
         return
@@ -381,7 +404,7 @@ def main():
         show_peak_detection = st.checkbox(
             "Show Peak Detection Analysis",
             value=False,
-            help="Enable to show peak detection analysis on all plots"
+            help="Enable peak detection analysis for additional insights"
         )
 
     if show_peak_detection:
@@ -399,11 +422,17 @@ def main():
     if selected_exp:
         exp_files = filtered_experiments[selected_exp]
         try:
-            # Load data
-            downstream_df = load_processed_data(os.path.join(OUTPUT_FOLDER, exp_files['downstream']))
-            upstream_df = load_processed_data(os.path.join(OUTPUT_FOLDER, exp_files['upstream']))
+            # Load data from selected subfolder
+            downstream_df = load_processed_data(
+                selected_subfolder,
+                exp_files['downstream']
+            )
+            upstream_df = load_processed_data(
+                selected_subfolder,
+                exp_files['upstream']
+            )
 
-            # Create throughput figures
+            # Create visualizations
             downstream_figs = create_throughput_figures(
                 downstream_df, 
                 is_downstream=True,
@@ -425,14 +454,14 @@ def main():
                 with col2:
                     st.plotly_chart(upstream_figs[i], use_container_width=True)
 
+            # Display peak detection analysis if enabled
             if show_peak_detection:
                 st.subheader("Peak Detection Accuracy Analysis")
                 
-                # Calculate confusion matrices and metrics
+                # Calculate metrics for downstream and upstream
                 ds_time = downstream_df['relative_time'].values
                 us_time = upstream_df['relative_time'].values
                 
-                # Downstream analysis
                 ds_tx_rate = downstream_df['tx_bytes'].values / np.mean(np.diff(ds_time))
                 ds_cm, ds_report, ds_peaking, ds_peaks, ds_filtered = calculate_peak_detection_accuracy(
                     ds_time,
@@ -441,7 +470,6 @@ def main():
                     window_size
                 )
                 
-                # Upstream analysis
                 us_tx_rate = upstream_df['tx_bytes'].values / np.mean(np.diff(us_time))
                 us_cm, us_report, us_peaking, us_peaks, us_filtered = calculate_peak_detection_accuracy(
                     us_time,
@@ -450,7 +478,7 @@ def main():
                     window_size
                 )
 
-                # Display confusion matrices
+                # Display confusion matrices and metrics
                 col1, col2 = st.columns(2)
                 with col1:
                     st.plotly_chart(plot_confusion_matrix(ds_cm, "Downstream Confusion Matrix"), use_container_width=True)
@@ -480,13 +508,13 @@ def main():
                     })
                     st.dataframe(metrics_df.set_index('Metric').style.format('{:.3f}'), use_container_width=True)
 
-            # Display experiment info
+            # Display experiment info and statistics
             st.subheader("Experiment Information")
             info = filtered_experiments[selected_exp]['info']
             
-            # Create info table
             info_data = {
                 'Parameter': [
+                    'Data Folder',
                     'Scenario',
                     'Experiment Type',
                     'Limited TCP Flows',
@@ -494,6 +522,7 @@ def main():
                     'CBR Rate (Mbps)'
                 ],
                 'Value': [
+                    selected_subfolder if selected_subfolder else 'Root Folder',
                     info['scenario'],
                     info['type'],
                     info['limited_flows'],
